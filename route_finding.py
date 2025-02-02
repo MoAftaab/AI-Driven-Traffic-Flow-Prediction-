@@ -318,9 +318,15 @@ def runRouter(src, dest, date, model: string, add_random_incidents: bool = True)
             incident_simulator.add_incident(incident)
             directions += f"\nWARNING: {incident.incident_type.value} - {incident.description}\n"
             directions += f"Duration: {incident.duration.total_seconds()/3600:.1f} hours\n"
-    if traffic_network.get_node_from_scats_number(int(src)) == None or traffic_network.get_node_from_scats_number(int(dest)) == None:
-        return "Invalid SCATS Number"
-    routes = find_routes(traffic_network, int(src), int(dest), date, model_type, route_options_count=5)
+    if traffic_network.get_node_from_scats_number(int(src)) == None:
+        return f"Invalid source SCATS Number: {src}"
+    if traffic_network.get_node_from_scats_number(int(dest)) == None:
+        return f"Invalid destination SCATS Number: {dest}"
+    
+    try:
+        routes = find_routes(traffic_network, int(src), int(dest), date, model_type, route_options_count=5)
+    except Exception as e:
+        return f"Error finding routes: {str(e)}"
     for i, r in enumerate(routes):
         print (f"--ROUTE {i + 1}--")
         directions += f"--ROUTE {i + 1}--\n"
