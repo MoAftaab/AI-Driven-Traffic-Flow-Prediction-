@@ -306,20 +306,28 @@ def parse_date(date_string):
 
 @app.route('/routes')
 def view_routes():
-    # Read traffic network data
-    scats_data = {}
-    with open('data/traffic_network2.csv', newline='') as csvfile:
-        reader = csv.DictReader(csvfile)
-        for row in reader:
-            scats_data[row['SCATS Number']] = {
-                'lat': float(row['Latitude']),
-                'lng': float(row['Longitude']),
-                'name': row['Site Description']
+    try:
+        # Read traffic network data
+        scats_data = {}
+        if os.path.exists('data/traffic_network2.csv'):
+            with open('data/traffic_network2.csv', newline='') as csvfile:
+                reader = csv.DictReader(csvfile)
+                for row in reader:
+                    scats_data[row['SCATS Number']] = {
+                        'lat': float(row['Latitude']),
+                        'lng': float(row['Longitude']),
+                        'name': row['Site Description']
+                    }
+        else:
+            # Use default values for demonstration
+            scats_data = {
+                "3001": {"lat": -37.831219, "lng": 145.056965, "name": "Default Location"}
             }
-    
-    return render_template('routes.html', scats_data=scats_data)
+        
+        return render_template('routes.html', scats_data=scats_data)
+    except Exception as e:
+        return jsonify({"error": f"Error loading routes: {str(e)}"}), 500
 
 if __name__ == '__main__':
     print(" * Running on http://127.0.0.1:5000")
     app.run(debug=True, host='0.0.0.0', port=5000)
-

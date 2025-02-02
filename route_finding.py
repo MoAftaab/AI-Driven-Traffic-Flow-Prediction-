@@ -7,7 +7,6 @@ from data.traffic_incidents import IncidentSimulator, TrafficIncident, IncidentT
 import numpy
 import random
 from sys import float_repr_style
-from turtle import distance
 import geopy.distance
 from TrafficData.TrafficFlowPredictor import TrafficFlowPredictor,TrafficFlowModelsEnum
 from enum import Enum

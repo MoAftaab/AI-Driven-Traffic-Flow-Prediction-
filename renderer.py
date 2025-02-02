@@ -1,6 +1,5 @@
 import argparse
 from sys import prefix
-from turtle import color
 import webbrowser
 import folium
 import json

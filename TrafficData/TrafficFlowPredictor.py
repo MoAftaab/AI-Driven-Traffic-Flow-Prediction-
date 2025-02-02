@@ -45,21 +45,60 @@ class TrafficFlowPredictor():
         self.location_series_data = {}
 
     def get_model(self,model_name:string):
-        if self.models.get(model_name) == None:
-            model_path = os.path.join(os.path.dirname(__file__),'SingleModelScats','model',f'{model_name}.h5')
-            self.models[model_name] = custom_load_model(model_path)
-        return self.models.get(model_name)
+        try:
+            if self.models.get(model_name) == None:
+                model_path = os.path.join(os.path.dirname(__file__),'SingleModelScats','model',f'{model_name}.h5')
+                if os.path.exists(model_path):
+                    self.models[model_name] = custom_load_model(model_path)
+                else:
+                    print(f"Model file not found: {model_path}")
+                    return None
+            return self.models.get(model_name)
+        except Exception as e:
+            print(f"Error loading model: {str(e)}")
+            return None
+
+    def get_default_prediction(self):
+        # Return a reasonable default prediction when model is not available
+        return 400  # Average flow rate
     
     def get_scalars(self):
-        _, _, _, _,_,_,_,_,self.flow_scaler, self.scats_scaler,self.days_scaler,self.times_scaler = process_data_datetime(self.file1, self.file2)
+        try:
+            if os.path.exists(self.file1) and os.path.exists(self.file2):
+                _, _, _, _,_,_,_,_,self.flow_scaler, self.scats_scaler,self.days_scaler,self.times_scaler = process_data_datetime(self.file1, self.file2)
+            else:
+                print("Training data files not found. Using default scalers.")
+                self.flow_scaler = MinMaxScaler()
+                self.scats_scaler = MinMaxScaler()
+                self.days_scaler = MinMaxScaler()
+                self.times_scaler = MinMaxScaler()
+                # Fit with some reasonable default ranges
+                self.flow_scaler.fit([[0], [800]])  # Flow range 0-800
+                self.scats_scaler.fit([[0], [5000]])  # SCATS number range
+                self.days_scaler.fit([[0], [6]])  # Days 0-6
+                self.times_scaler.fit([[0], [1439]])  # Minutes in a day (0-1439)
+        except Exception as e:
+            print(f"Error loading scalers: {str(e)}. Using default values.")
 
     def get_lookup_data(self):
-        _, _, _, _,self.series_data,_,_,_,_,_ = process_data_series(self.file1, self.file2,self.lags)
+        try:
+            if os.path.exists(self.file1) and os.path.exists(self.file2):
+                _, _, _, _,self.series_data,_,_,_,_,_ = process_data_series(self.file1, self.file2,self.lags)
+            else:
+                print("Training data files not found. Using empty series data.")
+                self.series_data = []
+        except Exception as e:
+            print(f"Error loading lookup data: {str(e)}. Using empty series data.")
+            self.series_data = []
         
         
     def predict_traffic_flow(self,location: int,date: datetime,steps:int,model_name: string):
         model = self.get_model(model_name)
         
+        if model is None:
+            # Use default prediction when model is not available
+            return self.get_default_prediction() * steps
+            
         X = None
         if model_name == "average":
             X = self.get_datetime_inputs(location,date,steps)
