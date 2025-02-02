@@ -6,9 +6,9 @@ import folium
 import json
 import csv
 import os
+import datetime
 
 TRAFFIC_NETWORK = 'data/traffic_network2.csv'
-
 
 style = lambda x: {
     'color' : x['properties']['stroke'],
@@ -24,7 +24,6 @@ def getCoords(scat):
 
     print("unable to find SCAT location")
     return 0,0
-
 
 def generateGeoJson(arr):
     data = {}
@@ -78,11 +77,31 @@ def drawNodes(map):
             fill=False,
             ).add_to(map)
 
+def drawIncidents(map, incidents):
+    if not incidents:
+        return
 
-def renderMap(routes):
+    for incident in incidents:
+        lon, lat = getCoords(incident.scats_number)
+        color = {
+            'Accident': 'red',
+            'Road Work': 'orange',
+            'Road Closure': 'black'
+        }.get(incident.incident_type.value, 'red')
+        
+        folium.Marker(
+            [lat, lon],
+            popup=f"<strong>{incident.incident_type.value}</strong><br>{incident.description}<br>Duration: {incident.duration.total_seconds()/3600:.1f} hours",
+            icon=folium.Icon(color=color, icon='warning-sign', prefix='fa')
+        ).add_to(map)
 
+def renderMap(routes, incidents=None):
     src = routes[0][0]
     dest = routes[0][-1]
+
+    if incidents is None:
+        from data.traffic_incidents import incident_simulator
+        incidents = incident_simulator.get_active_incidents(datetime.datetime.now())
 
     routes = generateGeoJson(routes)
 
@@ -95,9 +114,8 @@ def renderMap(routes):
     folium.GeoJson(routes, style_function=style).add_to(map)
 
     drawMarkers(map, src, dest)
-
     drawNodes(map)
-
+    drawIncidents(map, incidents)
 
     # save to file
     map.save("index.html")

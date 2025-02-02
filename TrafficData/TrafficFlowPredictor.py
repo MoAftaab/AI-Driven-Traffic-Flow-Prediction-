@@ -9,8 +9,12 @@ import math
 
 from sklearn.preprocessing import MinMaxScaler
 from TrafficData.SingleModelScats.data.data import process_data_datetime,process_data_series
-from keras.models import load_model
+from tensorflow.keras.losses import MeanSquaredError
+from fix_model import load_model_without_time_major
 warnings.filterwarnings("ignore")
+
+def custom_load_model(path):
+    return load_model_without_time_major(path)
 
 class TrafficFlowModelsEnum(Enum):
     LSTM = 'lstm'
@@ -42,7 +46,8 @@ class TrafficFlowPredictor():
 
     def get_model(self,model_name:string):
         if self.models.get(model_name) == None:
-            self.models[model_name] = load_model(os.path.join(os.path.dirname(__file__),'SingleModelScats','model',f'{model_name}.h5'))
+            model_path = os.path.join(os.path.dirname(__file__),'SingleModelScats','model',f'{model_name}.h5')
+            self.models[model_name] = custom_load_model(model_path)
         return self.models.get(model_name)
     
     def get_scalars(self):
@@ -113,7 +118,12 @@ class TrafficFlowPredictor():
         if len(day_X) == 0:
             return None
 
-        X = np.array([day_X[time_index + i] for i in range(steps)])
+        # Handle case where time_index + steps would exceed array bounds
+        available_steps = min(steps, len(day_X) - time_index)
+        if available_steps <= 0:
+            return None
+            
+        X = np.array([day_X[time_index + i] for i in range(available_steps)])
         X = np.reshape(X, (X.shape[0], X.shape[1], 1))
         return X
 

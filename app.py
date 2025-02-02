@@ -1,145 +1,325 @@
-import datetime
+from flask import Flask, render_template_string, render_template, request, jsonify
+import datetime 
 import os
-from tkinter import *
-from tkinter.scrolledtext import ScrolledText
-from turtle import width
-import webbrowser
+import csv
+from TrafficData.TrafficFlowPredictor import TrafficFlowPredictor, TrafficFlowModelsEnum
 import route_finding as router
-import datetime
-from TrafficData.TrafficFlowPredictor import *
 
-root = Tk()
+app = Flask(__name__, static_url_path='/static', static_folder='static')
 
+@app.route('/')
+def index():
+    return render_template_string('''
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Route Navigation</title>
+        <style>
+            body { 
+                font-family: Arial, sans-serif;
+                margin: 0;
+                padding: 20px;
+                background-color: #f5f5f5;
+            }
+            .container { 
+                width: 400px;
+                margin: 0 auto;
+                background-color: white;
+                padding: 20px;
+                border-radius: 8px;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            }
+            .form-group { 
+                margin-bottom: 15px; 
+            }
+            label { 
+                display: block;
+                margin-bottom: 5px;
+                font-weight: bold;
+            }
+            input, select { 
+                width: 100%;
+                padding: 8px;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+                box-sizing: border-box;
+            }
+            button {
+                width: 100%;
+                padding: 10px;
+                background-color: #4CAF50;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                margin-bottom: 10px;
+            }
+            button:hover {
+                background-color: #45a049;
+            }
+            textarea { 
+                width: 100%;
+                height: 150px;
+                padding: 8px;
+                margin-bottom: 15px;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+                resize: vertical;
+                font-family: monospace;
+            }
+            h1, h2 {
+                color: #333;
+                text-align: center;
+            }
+            .loading {
+                color: #666;
+                text-align: center;
+                font-style: italic;
+            }
+            .error {
+                color: #ff0000;
+                margin-bottom: 10px;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Route Navigation</h1>
+            <div class="form-group">
+                <label for="model">Model:*</label>
+                <select id="model">
+                    <option value="LSTM">LSTM</option>
+                    <option value="RNN">RNN</option>
+                    <option value="GRU">GRU</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="src">Source:*</label>
+                <input type="text" id="src" placeholder="Enter source SCATS">
+            </div>
+            <div class="form-group">
+                <label for="dest">Destination:*</label>
+                <input type="text" id="dest" placeholder="Enter destination SCATS">
+            </div>
+            <div class="form-group">
+                <label for="date">Date/Time (YYYY/MM/DD HH:MM):</label>
+                <input type="text" id="date" placeholder="e.g., 2024/02/01 14:30">
+            </div>
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" id="enableIncidents" checked>
+                    Enable Traffic Incident Simulation
+                </label>
+            </div>
+            <div id="activeIncidents" style="margin-bottom: 15px; display: none;">
+                <label>Active Incidents:</label>
+                <div style="background-color: #f8f8f8; padding: 10px; border-radius: 4px; margin-top: 5px;">
+                    <ul id="incidentsList" style="margin: 0; padding-left: 20px;"></ul>
+                </div>
+            </div>
+            <button onclick="generateRoutes()" id="generateBtn">Generate Routes</button>
+            <button onclick="viewRoutes()">View Routes</button>
+            <textarea id="routesText" readonly></textarea>
+            
+            <h2>Predict SCATS Traffic Flow</h2>
+            <div class="form-group">
+                <label for="point">SCATS Point:*</label>
+                <input type="text" id="point" placeholder="Enter SCATS point">
+            </div>
+            <button onclick="predictFlow()" id="predictBtn">Predict Traffic Flow</button>
+            <textarea id="predictionText" readonly></textarea>
+        </div>
 
-class Window:
-	master = None
-	routesText = None
+        <script>
+            function generateRoutes() {
+                const src = document.getElementById('src').value;
+                const dest = document.getElementById('dest').value;
+                const date = document.getElementById('date').value;
+                const model = document.getElementById('model').value;
+                const enableIncidents = document.getElementById('enableIncidents').checked;
+                
+                if (!src || !dest) {
+                    document.getElementById('routesText').value = "Please enter SCATS";
+                    return;
+                }
 
-	src = StringVar()
-	dest = StringVar()
-	pred = StringVar()
-	model = StringVar()
-	date_string = StringVar()
+                document.getElementById('routesText').value = "Generating Routes...";
+                document.getElementById('generateBtn').disabled = true;
 
-	def viewRoutes(self):
-		webbrowser.open_new_tab('file://' + os.path.realpath('index.html'))
+                fetch('/generate_routes', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: `src=${encodeURIComponent(src)}&dest=${encodeURIComponent(dest)}&date=${encodeURIComponent(date)}&model=${encodeURIComponent(model)}&enable_incidents=${enableIncidents}`
+                })
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('routesText').value = data.error || data.routes;
+                    document.getElementById('generateBtn').disabled = false;
+                    
+                    // Update incidents display
+                    const incidentsDiv = document.getElementById('activeIncidents');
+                    const incidentsList = document.getElementById('incidentsList');
+                    
+                    if (data.incidents && data.incidents.length > 0) {
+                        incidentsList.innerHTML = data.incidents.map(incident => 
+                            `<li><strong>${incident.type}</strong>: ${incident.description} (${incident.duration} hrs)</li>`
+                        ).join('');
+                        incidentsDiv.style.display = 'block';
+                    } else {
+                        incidentsDiv.style.display = 'none';
+                    }
+                })
+                .catch(error => {
+                    document.getElementById('routesText').value = "An error occurred while generating routes.";
+                    document.getElementById('generateBtn').disabled = false;
+                });
+            }
 
-	def setTextBox(self, text):
-		self.routesText.configure(state=NORMAL)
-		self.routesText.delete(1.0,END)
-		self.routesText.insert(INSERT, text)
-		self.routesText.configure(state=DISABLED)
-		return
+            function viewRoutes() {
+                window.open('/routes', '_blank');
+            }
 
-	def get_date(self):
-		date_string = self.date_string.get()
+            function predictFlow() {
+                const point = document.getElementById('point').value;
+                const date = document.getElementById('date').value;
+                const model = document.getElementById('model').value;
 
-		date = None
-		try:
-			date = parse_date(date_string)
-		except:
-			date = datetime.datetime.now()
-		return date
+                if (!point) {
+                    document.getElementById('predictionText').value = "Please enter SCATS";
+                    return;
+                }
 
-	def run(self):
-		self.setTextBox("Generating Routes...")
+                document.getElementById('predictionText').value = "Predicting...";
+                document.getElementById('predictBtn').disabled = true;
 
-		src = self.src.get()
-		dest = self.dest.get()
+                fetch('/predict_flow', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: `point=${encodeURIComponent(point)}&date=${encodeURIComponent(date)}&model=${encodeURIComponent(model)}`
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        document.getElementById('predictionText').value = data.error;
+                    } else {
+                        document.getElementById('predictionText').value = 
+                            `--Predicted Traffic Flow--\nSCATS:\t\t${data.scats}\nTime:\t\t${data.time}\nPrediction:\t\t${data.prediction}`;
+                    }
+                    document.getElementById('predictBtn').disabled = false;
+                })
+                .catch(error => {
+                    document.getElementById('predictionText').value = "An error occurred while predicting traffic flow.";
+                    document.getElementById('predictBtn').disabled = false;
+                });
+            }
 
-		if src == '' or dest == '':
-			self.setTextBox("Please enter SCATS")
-			return
-		
-		routes = router.runRouter(src, dest, self.get_date(), self.model.get())
-		self.setTextBox(routes)
-		return
-	
-	def predictFlow(self):
-		self.setTextBox("Predicting...")
-		point = str(self.pred.get())
+            // Set default date/time
+            window.onload = function() {
+                const now = new Date();
+                const year = now.getFullYear();
+                const month = String(now.getMonth() + 1).padStart(2, '0');
+                const day = String(now.getDate()).padStart(2, '0');
+                const hours = String(now.getHours()).padStart(2, '0');
+                const minutes = String(now.getMinutes()).padStart(2, '0');
+                document.getElementById('date').value = `${year}/${month}/${day} ${hours}:${minutes}`;
+            };
+        </script>
+    </body>
+    </html>
+    ''')
 
-		if point == '':
-			self.setTextBox("Please enter SCATS")
-			return
+# Initialize predictor
+predictor = None
 
-		predictor = TrafficFlowPredictor()
-		date = self.get_date()
-		try:
-			flow = predictor.predict_traffic_flow(point, date, 4, self.model.get())
-		except:
-			self.setTextBox("Invalid SCATS")
-			return
-		self.setTextBox(f"--Predicted Traffic Flow--\nSCATS:\t\t{point}\nTime:\t\t{date.strftime('%Y/%m/%d %I:%M:%S')}\nPrediction:\t\t{str(flow)}veh/hr")
-		return
+@app.route('/generate_routes', methods=['POST'])
+def generate_routes():
+    src = request.form['src']
+    dest = request.form['dest']
+    date_string = request.form['date']
+    model = request.form['model']
+    enable_incidents = request.form.get('enable_incidents', 'true') == 'true'
 
-	def createWindow(self):
-		self.master.title("Route Navigation")
-		self.master.geometry("400x750")
-		self.master.resizable(False, True)
-		Label(self.master, text="Route Navigation", font='Helvetica 18 bold').pack()
-	
-	def renderElements(self):
-		modelLbl = Label(self.master, width=20, text="Model:")
-		self.model.set(TrafficFlowModelsEnum.LSTM.value)
+    if not src or not dest:
+        return jsonify({"error": "Please enter SCATS"})
 
-		model_selection = OptionMenu(self.master, self.model, *[option.value for option in TrafficFlowModelsEnum])
+    try:
+        date = parse_date(date_string) if date_string else datetime.datetime.now()
+    except ValueError:
+        date = datetime.datetime.now()
 
-		modelLbl.pack()
-		model_selection.pack()
+    try:
+        # Load router on-demand
+        routes = router.runRouter(src, dest, date, model, enable_incidents)
+        
+        # Get active incidents info
+        from data.traffic_incidents import incident_simulator
+        active_incidents = incident_simulator.get_active_incidents(date)
+        incidents_info = [{
+            'type': incident.incident_type.value,
+            'description': incident.description,
+            'duration': f"{incident.duration.total_seconds()/3600:.1f}"
+        } for incident in active_incidents] if enable_incidents else []
+        
+        return jsonify({
+            "routes": routes,
+            "incidents": incidents_info
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)})
 
-		srcLbl = Label(self.master, width=20, text="Source:*")
-		srcInput = Entry(self.master, width=10, text=self.src)
-		destLbl = Label(self.master, width=20, text="Destination:*")
-		destInput = Entry(self.master, width=10, text=self.dest)
-		dateLbl = Label(self.master, width=20, text="Date/Time:")
-		dateInput = Entry(self.master, width=20, text=self.date_string)
+@app.route('/predict_flow', methods=['POST'])
+def predict_flow():
+    global predictor
+    point = request.form['point']
+    date_string = request.form['date']
+    model = request.form['model']
 
-		# add locations to window
-		srcLbl.pack()
-		srcInput.pack()
-		destLbl.pack()
-		destInput.pack()
-		dateLbl.pack()
-		dateInput.pack()
+    if not point:
+        return jsonify({"error": "Please enter SCATS"})
 
-		# Create the rest of the UI elements
-		generateBtn = Button(self.master, text="Generate", command=self.run)
+    try:
+        date = parse_date(date_string) if date_string else datetime.datetime.now()
+    except ValueError:
+        date = datetime.datetime.now()
 
-		self.routesText = ScrolledText(self.master, width=50, padx=0)
+    try:
+        # Initialize predictor on first use
+        if predictor is None:
+            predictor = TrafficFlowPredictor()
+        
+        flow = predictor.predict_traffic_flow(point, date, 4, model)
+        return jsonify({
+            "scats": point,
+            "time": date.strftime('%Y/%m/%d %I:%M:%S'),
+            "prediction": f"{flow} veh/hr"
+        })
+    except Exception as e:
+        return jsonify({"error": "Invalid SCATS"})
 
-		displayBtn = Button(self.master, text="View", command=self.viewRoutes)
-
-		# Add the elements to the window
-		generateBtn.pack()
-		self.routesText.pack()
-		self.routesText.configure(state=DISABLED)
-
-		displayBtn.pack()
-
-		# SCAT prediction ui
-		predLbl = Label(self.master, width=20, text="Predict SCAT Traffic Flow:")
-		predInput = Entry(self.master, width=10, text=self.pred)
-		predBtn = Button(self.master, text="Predict", command=self.predictFlow)
-
-		predLbl.pack()
-		predInput.pack()
-		predBtn.pack()
-
-
-	def __init__(self, master):
-		self.master = master
-		self.createWindow()
-		self.renderElements()
-		
-
-# Date Format: 2006/10/02 2:45
 def parse_date(date_string):
-    date,time = date_string.split()
-    year,month,day = date.split('/')
-    hour,minute = time.split(':')
-    return datetime.datetime(int(year),int(month),int(day),int(hour),int(minute))
+    date, time = date_string.split()
+    year, month, day = map(int, date.split('/'))
+    hour, minute = map(int, time.split(':'))
+    return datetime.datetime(year, month, day, hour, minute)
 
-# keep the window open on the mainloop
-gui = Window(root)
-root.mainloop()
+@app.route('/routes')
+def view_routes():
+    # Read traffic network data
+    scats_data = {}
+    with open('data/traffic_network2.csv', newline='') as csvfile:
+        reader = csv.DictReader(csvfile)
+        for row in reader:
+            scats_data[row['SCATS Number']] = {
+                'lat': float(row['Latitude']),
+                'lng': float(row['Longitude']),
+                'name': row['Site Description']
+            }
+    
+    return render_template('routes.html', scats_data=scats_data)
+
+if __name__ == '__main__':
+    print(" * Running on http://127.0.0.1:5000")
+    app.run(debug=True, host='0.0.0.0', port=5000)
+

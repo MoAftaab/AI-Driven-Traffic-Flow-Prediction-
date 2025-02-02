@@ -3,6 +3,7 @@ from distutils.log import debug
 import string
 import csv
 import datetime
+from data.traffic_incidents import IncidentSimulator, TrafficIncident, IncidentType
 import numpy
 import random
 from sys import float_repr_style
@@ -12,9 +13,11 @@ from TrafficData.TrafficFlowPredictor import TrafficFlowPredictor,TrafficFlowMod
 from enum import Enum
 from operator import attrgetter
 from typing import List
-from typing_extensions import Self
+# from typing_extensions import Self
 import argparse
 from renderer import renderMap
+from keras.models import Sequential
+from keras.layers import LSTM, Dense
 
 MAX_SPEED = 60 # estimate to be the speed limit for all roads
 CAPACITY_SPEED = 31 # canvas says 48
@@ -25,6 +28,17 @@ ITERSECTION_WAIT_TIME = 30 / 60 / 60 # approximate an average wait time of 30 se
 TRAFFIC_NETWORK_FILE = "data/traffic_network2.csv"
 
 predictor = TrafficFlowPredictor()
+incident_simulator = IncidentSimulator(TRAFFIC_NETWORK_FILE)
+
+# Define timesteps and features
+timesteps = 10  # Example value, set this to the number of timesteps in your input data
+features = 5    # Example value, set this to the number of features in your input data
+
+model = Sequential()
+model.add(LSTM(50, return_sequences=True, input_shape=(timesteps, features)))  # Ensure no unsupported arguments
+model.add(LSTM(50, return_sequences=False))  # Ensure no unsupported arguments
+model.add(Dense(1))
+model.compile(optimizer='adam', loss='mse')
 
 # enum for each type of scats site
 class SiteType(Enum):
@@ -105,12 +119,12 @@ class Route:
 # route Node wraps up the node class and implements functionality to allow for routing for A* graph search
 class RouteNode:
     node: Node
-    previous_node: Self
+    previous_node: 'RouteNode'
     cost: float
     date: datetime
     model_type: string
 
-    def __init__(self, node: Self, previous_node: Self, date: datetime, model_type: string) -> None:
+    def __init__(self, node: Node, previous_node: 'RouteNode', date: datetime, model_type: string) -> None:
         self.node = node
         self.previous_node = previous_node
         self.date = date
@@ -120,7 +134,7 @@ class RouteNode:
 
     def convert_to_route(self) -> Route:
         route = Route(self.cost)
-        cur_node: Self = self
+        cur_node: 'RouteNode' = self
         while cur_node != None:
             #print (cur_node.node.scats_number)
             route.nodes.append(cur_node.node)
@@ -158,7 +172,12 @@ class RouteNode:
         # add the cost to the predition so the traffic times are slightly more accurate
         new_date_time = date + datetime.timedelta(hours=self.previous_node.cost)
         print("model type here: " + model_type)
-        flow = predictor.predict_traffic_flow(self.previous_node.node.scats_number, new_date_time,4,model_type)
+        # Get base flow prediction
+        base_flow = predictor.predict_traffic_flow(self.previous_node.node.scats_number, new_date_time, 4, model_type)
+        
+        # Apply incident effects
+        flow_multiplier = incident_simulator.get_flow_multiplier(self.previous_node.node.scats_number, new_date_time)
+        flow = base_flow * flow_multiplier
         #random.seed(self.previous_node.node.scats_number + time.minute)
         #flow = random.randint(0, 1800)
 
@@ -285,12 +304,21 @@ def createParser():
     args = parser.parse_args()
     return args
 
-def runRouter(src, dest, date, model: string):
+def runRouter(src, dest, date, model: string, add_random_incidents: bool = True):
     model_type = model
     directions = ""
     scatsList = []
     traffic_network = open_road_network(TRAFFIC_NETWORK_FILE)
     print(traffic_network.get_node_from_scats_number(int(src)))
+
+    # Generate random incidents if requested
+    if add_random_incidents:
+        num_incidents = random.randint(1, 3)  # Generate 1-3 random incidents
+        for _ in range(num_incidents):
+            incident = incident_simulator.generate_random_incident(date)
+            incident_simulator.add_incident(incident)
+            directions += f"\nWARNING: {incident.incident_type.value} - {incident.description}\n"
+            directions += f"Duration: {incident.duration.total_seconds()/3600:.1f} hours\n"
     if traffic_network.get_node_from_scats_number(int(src)) == None or traffic_network.get_node_from_scats_number(int(dest)) == None:
         return "Invalid SCATS Number"
     routes = find_routes(traffic_network, int(src), int(dest), date, model_type, route_options_count=5)
@@ -299,7 +327,8 @@ def runRouter(src, dest, date, model: string):
         directions += f"--ROUTE {i + 1}--\n"
         directions += r.print_route()
         scatsList.append(r.list_scats())
-    renderMap(scatsList)
+    active_incidents = incident_simulator.get_active_incidents(date) if add_random_incidents else []
+    renderMap(scatsList, active_incidents)
     return directions
 
 if __name__ == "__main__":

@@ -15,7 +15,19 @@ https://youtu.be/FDYNU3bReCY Traffic Flow Prediction with Neural Networks(SAEs, 
 11. typing_extensions==4.4.0
 
 ## How to run
+
+### Using Python
 Open the root directory in a terminal and type ```python app.py```
+
+### Using Docker
+1. Build the Docker image:
+    ```sh
+    docker build -t traffic-flow-prediction-system .
+    ```
+2. Run the Docker container:
+    ```sh
+    docker run -p 5000:5000 traffic-flow-prediction-system
+    ```
 
 ## Screenshots
 ![image](https://user-images.githubusercontent.com/53892067/198414724-86ebf7fa-2e40-4ab6-b79d-5df30c2911f6.png)

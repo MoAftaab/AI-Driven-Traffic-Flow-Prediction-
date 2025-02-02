@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta http-equiv="content-type" content="text/html; charset=UTF-8" />
+    <title>Route Visualization</title>
+    <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/leaflet.js"></script>
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Leaflet.awesome-markers/2.0.2/leaflet.awesome-markers.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/leaflet.css"/>
+    <link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.0/css/bootstrap-glyphicons.css"/>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/Leaflet.awesome-markers/2.0.2/leaflet.awesome-markers.css"/>
+    <style>
+        html, body {
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            padding: 0;
+        }
+        #map {
+            width: 100%;
+            height: 100vh;
+        }
+        .leaflet-container {
+            font-size: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+
+    <script>
+        const scatsData = {{ scats_data|tojson|safe }};
+        
+        // Initialize map centered on Melbourne
+        const map = L.map('map', {
+            center: [-37.831219, 145.056965],
+            zoom: 13,
+            zoomControl: false,
+            scrollWheelZoom: false,
+            dragging: false
+        });
+        
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+            attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors © <a href="https://carto.com/attributions">CARTO</a>'
+        }).addTo(map);
+
+        // Add SCATS nodes
+        for (const scats in scatsData) {
+            const coords = getSCATSCoords(scats);
+            if (coords) {
+                L.circle([coords[1], coords[0]], {
+                    radius: 5,
+                    color: '#5A5A5A',
+                    fill: false
+                })
+                .bindPopup(`SCATS: ${scats}`)
+                .addTo(map);
+            }
+        }
+
+        function getSCATSCoords(scats) {
+            const data = scatsData[scats];
+            if (!data) return null;
+            // Add offsets as in the original code
+            return [
+                data.lng + 0.0012469,  // longitude
+                data.lat + 0.0012275   // latitude
+            ];
+        }
+
+        function parseRouteText(routesText) {
+            if (!routesText) return [];
+            
+            const routes = [];
+            const routeSections = routesText.split('--ROUTE').filter(r => r.trim());
+            
+            let minCost = Infinity;
+            let bestPathPoints = [];
+            
+            routeSections.forEach((section) => {
+                const lines = section.trim().split('\n');
+                let scatsPoints = [];
+                let cost = Infinity;
+                
+                lines.forEach(line => {
+                    // Parse cost/time
+                    const costMatch = line.match(/Cost:\s*([\d.]+)mins/);
+                    if (costMatch) {
+                        cost = parseFloat(costMatch[1]);
+                    }
+                    // Parse SCATS points
+                    if (line.includes('-')) {
+                        const scats = line.split('-')[0].trim();
+                        if (!isNaN(scats) && scatsData[scats]) {
+                            scatsPoints.push(scats);
+                        }
+                    }
+                });
+
+                const coordinates = scatsPoints
+                    .map(getSCATSCoords)
+                    .filter(Boolean);
+
+                if (coordinates.length > 0) {
+                    routes.push({
+                        "type": "Feature",
+                        "properties": {
+                            "stroke": "#757575",
+                            "stroke-width": 5
+                        },
+                        "geometry": {
+                            "type": "LineString",
+                            "coordinates": coordinates
+                        }
+                    });
+
+                    // Update best path if this route has lower cost/time
+                    if (cost < minCost) {
+                        minCost = cost;
+                        bestPathPoints = [...scatsPoints]; // Store points of best path
+                    }
+                }
+            });
+
+            // Add the fastest path as a blue route
+            if (bestPathPoints.length > 0) {
+                const bestPathCoords = bestPathPoints
+                    .map(getSCATSCoords)
+                    .filter(Boolean);
+
+                // Add fastest route at the end so it renders last (on top)
+                routes.push({
+                    "type": "Feature",
+                    "properties": {
+                        "stroke": "#3484F0",
+                        "stroke-width": 6
+                    },
+                    "geometry": {
+                        "type": "LineString",
+                        "coordinates": bestPathCoords
+                    }
+                });
+            }
+
+            return {
+                "type": "FeatureCollection",
+                "features": routes
+            };
+        }
+
+        function parseIncidents(routesText) {
+            const incidents = [];
+            if (!routesText) return incidents;
+
+            const warningMatches = routesText.matchAll(/WARNING: (.*?) - (.*?)\nDuration: ([\d.]+) hours/g);
+            for (const match of warningMatches) {
+                const [_, type, description, duration] = match;
+                const scatsMatch = description.match(/intersection (\d+)/);
+                if (scatsMatch) {
+                    const scats = scatsMatch[1];
+                    const coords = getSCATSCoords(scats);
+                    if (coords) {
+                        incidents.push({
+                            type,
+                            description,
+                            duration,
+                            coords,
+                            scats
+                        });
+                    }
+                }
+            }
+            return incidents;
+        }
+
+        function displayRoutes() {
+            const routesText = window.opener?.document.getElementById('routesText')?.value;
+            if (!routesText) {
+                const center = [-37.831219, 145.056965];
+                map.setView(center, 13);
+                return;
+            }
+
+            // Add incident markers
+            const incidents = parseIncidents(routesText);
+            incidents.forEach(incident => {
+                const color = {
+                    'Accident': 'red',
+                    'Road Work': 'orange',
+                    'Road Closure': 'black'
+                }[incident.type] || 'red';
+
+                L.marker([incident.coords[1], incident.coords[0]], {
+                    icon: L.AwesomeMarkers.icon({
+                        icon: 'warning-sign',
+                        prefix: 'fa',
+                        markerColor: color,
+                        iconColor: 'white'
+                    })
+                })
+                .bindPopup(`<strong>${incident.type}</strong><br>${incident.description}<br>Duration: ${incident.duration} hours`)
+                .addTo(map);
+            });
+
+            const geojson = parseRouteText(routesText);
+            
+            // Add GeoJSON routes
+            L.geoJSON(geojson, {
+                style: function(feature) {
+                    return {
+                        color: feature.properties.stroke,
+                        weight: feature.properties["stroke-width"]
+                    };
+                }
+            }).addTo(map);
+
+            // Add markers for start and end points if routes exist
+            if (geojson.features.length > 0) {
+                // Get route with shortest distance (the blue one)
+                // If there's only one route, use it directly, otherwise find the blue one
+                const route = geojson.features.length === 1 ? 
+                    geojson.features[0] : 
+                    geojson.features.find(f => f.properties.stroke === "#3484F0");
+                const coords = route.geometry.coordinates;
+                // Get first route's text and parse SCATS points
+                const routeText = routesText.split('--ROUTE')[1];
+                const routeLines = routeText.trim().split('\n').filter(line => line.includes('-'));
+                const startSCATS = routeLines[0].split('-')[0].trim();
+                const endSCATS = routeLines[routeLines.length - 1].split('-')[0].trim();
+                
+                if (coords.length >= 2) {
+                    const start = coords[0];
+                    const end = coords[coords.length - 1];
+                    
+                    // Start marker with blue circle icon
+                    L.marker([start[1], start[0]], {
+                        icon: L.AwesomeMarkers.icon({
+                            icon: 'circle',
+                            prefix: 'fa',
+                            markerColor: 'blue',
+                            iconColor: 'white'
+                        })
+                    })
+                    .bindPopup(`<strong>Start</strong> SCATS: ${startSCATS}`)
+                    .addTo(map);
+                    
+                    // End marker with red flag icon
+                    L.marker([end[1], end[0]], {
+                        icon: L.AwesomeMarkers.icon({
+                            icon: 'flag',
+                            prefix: 'fa',
+                            markerColor: 'red',
+                            iconColor: 'white'
+                        })
+                    })
+                    .bindPopup(`<strong>Finish</strong> SCATS: ${endSCATS}`)
+                    .addTo(map);
+
+                    // Fit map to route bounds
+                    const bounds = L.latLngBounds([]);
+                    geojson.features.forEach(feature => {
+                        feature.geometry.coordinates.forEach(coord => {
+                            bounds.extend([coord[1], coord[0]]);
+                        });
+                    });
+                    map.fitBounds(bounds, { padding: [50, 50] });
+                }
+            }
+        }
+
+        window.onload = displayRoutes;
+    </script>
+</body>
+</html>
